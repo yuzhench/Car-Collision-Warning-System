@@ -200,6 +200,7 @@ def mean_average_precision(
     return sum(average_precisions) / len(average_precisions)
 
 
+
 def plot_image(image, boxes):
     """Plots predicted bounding boxes on the image"""
     im = np.array(image)
@@ -215,6 +216,17 @@ def plot_image(image, boxes):
 
     # Create a Rectangle potch
     for box in boxes:
+        #-----------------------------start_modification----------------------
+        import json 
+
+        with open("label_lookup_table.json") as f:
+            data = json.load(f)
+            label_lookup_table = data["labels"]
+        label_index = int (box[0])
+        confident_rate = box[1]
+        label_name = label_lookup_table[label_index]
+
+        #------------------------------end_modification-----------------------
         box = box[2:]
         assert len(box) == 4, "Got more values than in x, y, w, h, in a box!"
         upper_left_x = box[0] - box[2] / 2
@@ -229,6 +241,18 @@ def plot_image(image, boxes):
         )
         # Add the patch to the Axes
         ax.add_patch(rect)
+
+        #-----------------------------start_modification----------------------
+        # Print class name on the left top corner of the box
+        ax.text(
+            upper_left_x * width,
+            upper_left_y * height,
+            (label_name + "  con_rate:" + str(round(confident_rate,2))),
+            fontsize=10,
+            color="b",
+            # bbox=dict(facecolor="white", alpha=0.5),
+        )
+        #------------------------------end_modification-----------------------
 
     plt.show()
 

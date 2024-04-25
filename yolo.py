@@ -1,7 +1,7 @@
 import torch
 import tensor
 import torch.nn as nn
-
+ 
 class YOLO_CNN(nn.Module):
     def __init__(self):
         super(YOLO_CNN,self).__init__()

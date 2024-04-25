@@ -75,6 +75,7 @@ def train_fn(train_loader, model, optimizer, loss_fn):
 
 def main():
     # model = Yolov1(split_size=7, num_boxes=2, num_classes=20).to(DEVICE)
+    print("the device we use is: ", DEVICE)
     model = Yolov1().to(DEVICE)
     optimizer = optim.Adam(
         model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY
@@ -85,15 +86,15 @@ def main():
         load_checkpoint(torch.load(LOAD_MODEL_FILE), model, optimizer)
 
     train_dataset = VOCDataset(
+        # "data/bigger_dataset.csv",
         "data/100examples.csv",
         transform=transform,
-        img_dir=IMG_DIR,
-        label_dir=LABEL_DIR,
+        img_text_dir=(IMG_DIR,LABEL_DIR)
     )
 
-    test_dataset = VOCDataset(
-        "data/test.csv", transform=transform, img_dir=IMG_DIR, label_dir=LABEL_DIR,
-    )
+    # test_dataset = VOCDataset(
+    #     "data/test.csv", transform=transform, img_dir=IMG_DIR, label_dir=LABEL_DIR, ##-->current command out 
+    # )
 
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -104,14 +105,14 @@ def main():
         drop_last=True,
     )
 
-    test_loader = DataLoader(
-        dataset=test_dataset,
-        batch_size=BATCH_SIZE,
-        num_workers=NUM_WORKERS,
-        pin_memory=PIN_MEMORY,
-        shuffle=True,
-        drop_last=True,
-    )
+    # test_loader = DataLoader(
+    #     dataset=test_dataset,
+    #     batch_size=BATCH_SIZE,
+    #     num_workers=NUM_WORKERS,##-->current command out 
+    #     pin_memory=PIN_MEMORY,
+    #     shuffle=True,
+    #     drop_last=True,
+    # )
 
     for epoch in range(EPOCHS):
         # for x, y in train_loader:

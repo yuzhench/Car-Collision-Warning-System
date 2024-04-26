@@ -5,7 +5,7 @@ from ultralytics import YOLO
 model = YOLO('yolov8n.pt')
 
 # Run inference on 'bus.jpg'
-results = model('bus.jpg')  # results list
+results = model('yolo_project/traffic_cross_frames_cutted/frame_205.jpg')  # results list
 
 # Visualize the results
 for i, r in enumerate(results):

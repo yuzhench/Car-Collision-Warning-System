@@ -11,6 +11,7 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 from model import Yolov1
 from dataset import VOCDataset
+import torch.nn as nn
 from utils import (
     non_max_suppression,
     mean_average_precision,
@@ -21,7 +22,9 @@ from utils import (
     save_checkpoint,
     load_checkpoint,
 )
-from loss import YoloLoss
+from loss_transfer import YoloLoss
+
+from transfer_learning import get_bboxes_transfer, mean_average_precision_transfer
 
 seed = 123
 torch.manual_seed(seed)
@@ -36,6 +39,7 @@ NUM_WORKERS = 2
 PIN_MEMORY = True
 LOAD_MODEL = False
 LOAD_MODEL_FILE = "overfit.pth.tar"
+TRANSFER_MODEL = "transfer.pth.tar"
 IMG_DIR = "data/images"
 LABEL_DIR = "data/labels"
 
@@ -56,11 +60,22 @@ transform = Compose([transforms.Resize((448, 448)), transforms.ToTensor(),])
 
 def train_fn(train_loader, model, optimizer, loss_fn):
     loop = tqdm(train_loader, leave=True)
+    print("size of the loop: ", len(loop))
     mean_loss = []
 
     for batch_idx, (x, y) in enumerate(loop):
+        new_shape = (16,7,7,40)#modify
+        new_lables = torch.zeros(new_shape)#modify
+        new_lables[...,:20] = y[...,:20]
+        new_lables[...,30:] = y[...,20:]
+        y = new_lables
+
+        
         x, y = x.to(DEVICE), y.to(DEVICE)
         out = model(x)
+        print("the shape of y is:", y.shape)
+         
+
         loss = loss_fn(out, y)
         mean_loss.append(loss.item())
         optimizer.zero_grad()
@@ -71,6 +86,34 @@ def train_fn(train_loader, model, optimizer, loss_fn):
         loop.set_postfix(loss=loss.item())
 
     print(f"Mean loss was {sum(mean_loss)/len(mean_loss)}")
+
+
+
+def transfer_learning_train_fn(train_loader, model, optimizer, loss_fn):
+    loop = tqdm(train_loader, leave=True)
+    mean_loss = []
+
+    for batch_idx, (x, y) in enumerate(loop):
+        x, y = x.to(DEVICE), y.to(DEVICE)
+        
+        # Forward pass
+        out = model(x)
+        
+        # Calculate loss
+        loss = loss_fn(out, y)
+        mean_loss.append(loss.item())
+        
+        # Backpropagation
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # Update progress bar
+        loop.set_postfix(loss=loss.item())
+
+    print(f"Mean loss was {sum(mean_loss)/len(mean_loss)}")
+
+
 
 
 def main():
@@ -114,6 +157,23 @@ def main():
     #     drop_last=True,
     # )
 
+    #load the model ----------------------------
+    # model = Yolov1()
+    model_weights_path = "overfit_2000.pth.tar"
+    checkpoint = torch.load(model_weights_path)
+    model.load_state_dict(checkpoint['state_dict'])
+
+    for param in model.parameters():
+        param.requires_grad = False
+    for param in model.fc_layer1.parameters():
+        param.requires_grad = True
+    for param in model.fc_layer2.parameters():
+        param.requires_grad = True
+
+    # model.fc_layer1 = nn.Linear(in_features=50176, out_features=496).to(DEVICE)
+    model.fc_layer2 = nn.Linear(in_features=496, out_features= 1960).to(DEVICE)
+    #load_the_model------------------------------
+
     for epoch in range(EPOCHS):
         # for x, y in train_loader:
         #    x = x.to(DEVICE)
@@ -125,11 +185,15 @@ def main():
         #    import sys
         #    sys.exit()
 
-        pred_boxes, target_boxes = get_bboxes(
+        pred_boxes, target_boxes = get_bboxes_transfer(
             train_loader, model, iou_threshold=0.5, threshold=0.4
         )
 
-        mean_avg_prec = mean_average_precision(
+        # print("pred_boxes is: ", pred_boxes)
+        print("pred_boxes is: ", pred_boxes)
+
+
+        mean_avg_prec = mean_average_precision_transfer(
             pred_boxes, target_boxes, iou_threshold=0.5, box_format="midpoint"
         )
         print(f"Train mAP: {mean_avg_prec}")
@@ -140,11 +204,12 @@ def main():
                "state_dict": model.state_dict(),
                "optimizer": optimizer.state_dict(),
            }
-           save_checkpoint(checkpoint, filename=LOAD_MODEL_FILE)
+           save_checkpoint(checkpoint, filename=TRANSFER_MODEL)
            import time
            time.sleep(10)
 
         train_fn(train_loader, model, optimizer, loss_fn)
+        # transfer_learning_train_fn(train_loader, model, optimizer, loss_fn)
 
 
 if __name__ == "__main__":

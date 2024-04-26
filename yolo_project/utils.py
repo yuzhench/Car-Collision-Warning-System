@@ -4,51 +4,137 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from collections import Counter
 
-def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
+# def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
+#     """
+#     Calculates intersection over union
+
+#     Parameters:
+#         boxes_preds (tensor): Predictions of Bounding Boxes (BATCH_SIZE, 4)
+#         boxes_labels (tensor): Correct labels of Bounding Boxes (BATCH_SIZE, 4)
+#         box_format (str): midpoint/corners, if boxes (x,y,w,h) or (x1,y1,x2,y2)
+
+#     Returns:
+#         tensor: Intersection over union for all examples
+#     """
+
+#     if box_format == "midpoint":
+#         box1_x1 = boxes_preds[..., 0:1] - boxes_preds[..., 2:3] / 2
+#         box1_y1 = boxes_preds[..., 1:2] - boxes_preds[..., 3:4] / 2
+#         box1_x2 = boxes_preds[..., 0:1] + boxes_preds[..., 2:3] / 2
+#         box1_y2 = boxes_preds[..., 1:2] + boxes_preds[..., 3:4] / 2
+#         box2_x1 = boxes_labels[..., 0:1] - boxes_labels[..., 2:3] / 2
+#         box2_y1 = boxes_labels[..., 1:2] - boxes_labels[..., 3:4] / 2
+#         box2_x2 = boxes_labels[..., 0:1] + boxes_labels[..., 2:3] / 2
+#         box2_y2 = boxes_labels[..., 1:2] + boxes_labels[..., 3:4] / 2
+
+#     if box_format == "corners":
+#         box1_x1 = boxes_preds[..., 0:1]
+#         box1_y1 = boxes_preds[..., 1:2]
+#         box1_x2 = boxes_preds[..., 2:3]
+#         box1_y2 = boxes_preds[..., 3:4]  # (N, 1)
+#         box2_x1 = boxes_labels[..., 0:1]
+#         box2_y1 = boxes_labels[..., 1:2]
+#         box2_x2 = boxes_labels[..., 2:3]
+#         box2_y2 = boxes_labels[..., 3:4]
+
+#     x1 = torch.max(box1_x1, box2_x1)
+#     y1 = torch.max(box1_y1, box2_y1)
+#     x2 = torch.min(box1_x2, box2_x2)
+#     y2 = torch.min(box1_y2, box2_y2)
+
+#     # .clamp(0) is for the case when they do not intersect
+#     intersection = (x2 - x1).clamp(0) * (y2 - y1).clamp(0)
+
+#     box1_area = abs((box1_x2 - box1_x1) * (box1_y2 - box1_y1))
+#     box2_area = abs((box2_x2 - box2_x1) * (box2_y2 - box2_y1))
+
+#     return intersection / (box1_area + box2_area - intersection + 1e-6)
+
+
+
+def iou_xywh(box_pred, box_gt):
     """
-    Calculates intersection over union
-
-    Parameters:
-        boxes_preds (tensor): Predictions of Bounding Boxes (BATCH_SIZE, 4)
-        boxes_labels (tensor): Correct labels of Bounding Boxes (BATCH_SIZE, 4)
-        box_format (str): midpoint/corners, if boxes (x,y,w,h) or (x1,y1,x2,y2)
-
-    Returns:
-        tensor: Intersection over union for all examples
+    DH
     """
+    return iou_corners(xywh2corner(box_pred), xywh2corner(box_gt))
 
-    if box_format == "midpoint":
-        box1_x1 = boxes_preds[..., 0:1] - boxes_preds[..., 2:3] / 2
-        box1_y1 = boxes_preds[..., 1:2] - boxes_preds[..., 3:4] / 2
-        box1_x2 = boxes_preds[..., 0:1] + boxes_preds[..., 2:3] / 2
-        box1_y2 = boxes_preds[..., 1:2] + boxes_preds[..., 3:4] / 2
-        box2_x1 = boxes_labels[..., 0:1] - boxes_labels[..., 2:3] / 2
-        box2_y1 = boxes_labels[..., 1:2] - boxes_labels[..., 3:4] / 2
-        box2_x2 = boxes_labels[..., 0:1] + boxes_labels[..., 2:3] / 2
-        box2_y2 = boxes_labels[..., 1:2] + boxes_labels[..., 3:4] / 2
+def xywh2corner(box):
+    """
+    DH
+    box: Nx4: [x1,y1,x2,y2] top left & bottom right x,y, coordinates
+    """
+    corners = torch.zeros_like(box, dtype=torch.float32)
+    corners[:,0] = box[:,0] - box[:,2] / 2  # x1 = x - w/2
+    corners[:,1] = box[:,1] - box[:,3] / 2  # y1 = y - h/2
+    corners[:,2] = box[:,0] + box[:,2] / 2  # x2 = x + w/2
+    corners[:,3] = box[:,1] + box[:,3] / 2  # y2 = y + h/2
+    return corners
 
-    if box_format == "corners":
-        box1_x1 = boxes_preds[..., 0:1]
-        box1_y1 = boxes_preds[..., 1:2]
-        box1_x2 = boxes_preds[..., 2:3]
-        box1_y2 = boxes_preds[..., 3:4]  # (N, 1)
-        box2_x1 = boxes_labels[..., 0:1]
-        box2_y1 = boxes_labels[..., 1:2]
-        box2_x2 = boxes_labels[..., 2:3]
-        box2_y2 = boxes_labels[..., 3:4]
+def area_corners(box):
+    return abs((box[:,3]-box[:,1]) * (box[:,2]-box[:,0]))
 
-    x1 = torch.max(box1_x1, box2_x1)
-    y1 = torch.max(box1_y1, box2_y1)
-    x2 = torch.min(box1_x2, box2_x2)
-    y2 = torch.min(box1_y2, box2_y2)
+def iou_corners(box_pred, box_gt):
+    """
+    DH
+    Algo: max of x1 y1 each, min of x2, y2 each, compute area
+    """
+    intersect_box = torch.zeros_like(box_pred, dtype=torch.float32)
+    intersect_box[:,0] = torch.maximum(box_pred[:,0], box_gt[:,0]) # max of x1
+    intersect_box[:,1] = torch.maximum(box_pred[:,1], box_gt[:,1]) # max of y1
+    intersect_box[:,2] = torch.minimum(box_pred[:,2], box_gt[:,2]) # min of x2
+    intersect_box[:,3] = torch.minimum(box_pred[:,3], box_gt[:,3]) # min of y2
+    
+    inter_area = area_corners(intersect_box)
+    pred_area = area_corners(box_pred)
+    gt_area = area_corners(box_gt)
+    return inter_area / (pred_area + gt_area - inter_area + 1e-6)
 
-    # .clamp(0) is for the case when they do not intersect
-    intersection = (x2 - x1).clamp(0) * (y2 - y1).clamp(0)
 
-    box1_area = abs((box1_x2 - box1_x1) * (box1_y2 - box1_y1))
-    box2_area = abs((box2_x2 - box2_x1) * (box2_y2 - box2_y1))
+def get_oriented_bbox_corners(x, y, h, w, theta):
+    # Define the center coordinates
+    center = torch.tensor([x, y], dtype=torch.float32)
+    
+    # Half dimensions to simplify corner calculations
+    half_width = w / 2
+    half_height = h / 2
+    
+    # Corners of the rectangle in local coordinate space (unrotated)
+    corners = torch.tensor([
+        [-half_width, -half_height],
+        [half_width, -half_height],
+        [half_width, half_height],
+        [-half_width, half_height]
+    ], dtype=torch.float32)  # shape [4, 2]
+    
+    # Rotation matrix
+    cos_theta = torch.cos(theta)
+    sin_theta = torch.sin(theta)
+    rotation_matrix = torch.tensor([
+        [cos_theta, -sin_theta],
+        [sin_theta, cos_theta]
+    ], dtype=torch.float32)  # shape [2, 2]
+    
+    # Rotate corners
+    rotated_corners = torch.matmul(corners, rotation_matrix.t())  # Transpose to align dimensions
+    
+    # Translate corners to global coordinate space
+    oriented_corners = rotated_corners + center
+    
+    return oriented_corners
 
-    return intersection / (box1_area + box2_area - intersection + 1e-6)
+
+def get_polygon_area(rect1, rect2):
+    """
+    rect1, rect2 must be both arrays of shape (8,), with (x1,y1,x2,y2,x3,y3,x4,y4) in that order, clockwise.
+    """
+    pass
+
+
+
+def oriented_iou(rect1, rect2):
+    pass
+
+
 
 
 def non_max_suppression(bboxes, iou_threshold, threshold, box_format="corners"):
@@ -399,4 +485,29 @@ def generate_box_center_list(bounding_boxes,index):
 
     # with open()
 
+
+def test_iou():
+    # Test iou corners
+    print("TESTING IOU CORNERS")
+    box_1 = torch.tensor([[0,0,2,2],[0,0,2,2],[0,0,2,2],[0,0,2,2]])
+    box_2 = torch.tensor([[1,1,2,2],[2,2,5,3],[0,0,2,2],[0.5,0.5,1.5,4.5]])
     
+    iou = iou_corners(box_1, box_2)
+    iou_truth = [0.25, 0, 1, 1.5/6.5]
+    for i in range(len(iou_truth)):
+        print("Computed IOU:", iou[i], "expected", iou_truth[i])
+
+    # Test iou xywh
+    print("TESTING IOU XYWH")
+    box_1_xywh = torch.tensor([[1,1,2,2],[1,1,2,2],[1,1,2,2],[1,1,2,2]])
+    box_2_xywh = torch.tensor([[1.5,1.5,1,1],[3.5,2.5,3,1],[1,1,2,2],[1,2.5,1,4]])
+    iou = iou_xywh(box_1_xywh, box_2_xywh)
+    print(iou)
+    for i in range(len(iou_truth)):
+        print("Computed IOU:", iou[i], "expected", iou_truth[i])
+
+
+
+if __name__ == "__main__":
+    test_iou()
+

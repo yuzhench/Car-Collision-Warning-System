@@ -7,4 +7,10 @@ DOTA 100 example set: https://drive.google.com/file/d/1dIetWLiD9rzs8UO_7TSADbM2U
 
 
 
-hello
+report:
+
+methodology:
+  1. yolov1 paper architecture 
+  2. angled bbox
+  3. transfer learning (retrained the last few fully connected layers)
+  4. superpoint superglue (to add index to )

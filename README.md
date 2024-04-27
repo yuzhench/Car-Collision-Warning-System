@@ -11,6 +11,7 @@ report:
 
 methodology:
   1. yolov1 paper architecture 
-  2. angled bbox
+  2. angled bbox (new loss function) 
   3. transfer learning (retrained the last few fully connected layers)
-  4. superpoint superglue (to add index to )
+  4. superpoint superglue (to add an index to each object for tracking )
+  5. 

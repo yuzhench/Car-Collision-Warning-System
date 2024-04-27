@@ -4,54 +4,6 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from collections import Counter
 
-# def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
-#     """
-#     Calculates intersection over union
-
-#     Parameters:
-#         boxes_preds (tensor): Predictions of Bounding Boxes (BATCH_SIZE, 4)
-#         boxes_labels (tensor): Correct labels of Bounding Boxes (BATCH_SIZE, 4)
-#         box_format (str): midpoint/corners, if boxes (x,y,w,h) or (x1,y1,x2,y2)
-
-#     Returns:
-#         tensor: Intersection over union for all examples
-#     """
-
-#     if box_format == "midpoint":
-#         box1_x1 = boxes_preds[..., 0:1] - boxes_preds[..., 2:3] / 2
-#         box1_y1 = boxes_preds[..., 1:2] - boxes_preds[..., 3:4] / 2
-#         box1_x2 = boxes_preds[..., 0:1] + boxes_preds[..., 2:3] / 2
-#         box1_y2 = boxes_preds[..., 1:2] + boxes_preds[..., 3:4] / 2
-#         box2_x1 = boxes_labels[..., 0:1] - boxes_labels[..., 2:3] / 2
-#         box2_y1 = boxes_labels[..., 1:2] - boxes_labels[..., 3:4] / 2
-#         box2_x2 = boxes_labels[..., 0:1] + boxes_labels[..., 2:3] / 2
-#         box2_y2 = boxes_labels[..., 1:2] + boxes_labels[..., 3:4] / 2
-
-#     if box_format == "corners":
-#         box1_x1 = boxes_preds[..., 0:1]
-#         box1_y1 = boxes_preds[..., 1:2]
-#         box1_x2 = boxes_preds[..., 2:3]
-#         box1_y2 = boxes_preds[..., 3:4]  # (N, 1)
-#         box2_x1 = boxes_labels[..., 0:1]
-#         box2_y1 = boxes_labels[..., 1:2]
-#         box2_x2 = boxes_labels[..., 2:3]
-#         box2_y2 = boxes_labels[..., 3:4]
-
-#     x1 = torch.max(box1_x1, box2_x1)
-#     y1 = torch.max(box1_y1, box2_y1)
-#     x2 = torch.min(box1_x2, box2_x2)
-#     y2 = torch.min(box1_y2, box2_y2)
-
-#     # .clamp(0) is for the case when they do not intersect
-#     intersection = (x2 - x1).clamp(0) * (y2 - y1).clamp(0)
-
-#     box1_area = abs((box1_x2 - box1_x1) * (box1_y2 - box1_y1))
-#     box2_area = abs((box2_x2 - box2_x1) * (box2_y2 - box2_y1))
-
-#     return intersection / (box1_area + box2_area - intersection + 1e-6)
-
-
-
 def iou_xywh(box_pred, box_gt):
     """
     DH
@@ -70,7 +22,7 @@ def xywh2corner(box):
     corners[:,3] = box[:,1] + box[:,3] / 2  # y2 = y + h/2
     return corners
 
-def area_corners(box):
+def area_reg_box(box):
     return abs((box[:,3]-box[:,1]) * (box[:,2]-box[:,0]))
 
 def iou_corners(box_pred, box_gt):
@@ -84,56 +36,328 @@ def iou_corners(box_pred, box_gt):
     intersect_box[:,2] = torch.minimum(box_pred[:,2], box_gt[:,2]) # min of x2
     intersect_box[:,3] = torch.minimum(box_pred[:,3], box_gt[:,3]) # min of y2
     
-    inter_area = area_corners(intersect_box)
-    pred_area = area_corners(box_pred)
-    gt_area = area_corners(box_gt)
+    inter_area = area_reg_box(intersect_box)
+    pred_area = area_reg_box(box_pred)
+    gt_area = area_reg_box(box_gt)
     return inter_area / (pred_area + gt_area - inter_area + 1e-6)
 
 
-def get_oriented_bbox_corners(x, y, h, w, theta):
+
+# def get_line_ab(endpoints):
+#     """
+#     Endpoints: (X)x(x1,y1,x2,y2)
+#     Assuming ax + y + b = 0 for a line
+#     so a = (y1-y2)/(x1-x2) with offset to prevent /= 0
+#         b = 0-a*x1-y1
+
+#     Output (X)x1
+#     """
+#     # print("AB Input", endpoints.shape)
+#     a1 = (endpoints[...,1] - endpoints[...,3]) / (endpoints[...,0] - endpoints[...,2] + 1e-9)
+#     b1 = -endpoints[...,1] - a1 * endpoints[...,0]
+#     # print("AB Output", a1.shape)
+#     return(a1,b1)
+
+def get_line_ab(endpoints):
+    """
+    Calculate line coefficients a, b for the equation y = ax + b
+    Also returns coefficients c, d for the general form ax + by = c
+    """
+    dx = endpoints[..., 2] - endpoints[..., 0] + 1e-9  # Avoid division by zero
+    dy = endpoints[..., 3] - endpoints[..., 1]
+    a = dy / dx  # Slope
+    b = endpoints[..., 1] - a * endpoints[..., 0]  # Intercept
+
+    # Coefficients for general line form ax + by = c
+    a_general = -dy
+    b_general = dx
+    c_general = a_general * endpoints[..., 0] + b_general * endpoints[..., 1]
+
+    return a, b, a_general, b_general, c_general
+
+def in_segment(endpoints, x,y):
+    """
+    Test if point in within line segment
+    Input shape: (X)x4, (X), (X)
+    Output: (X)
+    """
+    ymax = torch.maximum(endpoints[...,1], endpoints[...,3])
+    ymin = torch.minimum(endpoints[...,1], endpoints[...,3])
+    xmax = torch.maximum(endpoints[...,0], endpoints[...,2])
+    xmin = torch.minimum(endpoints[...,0], endpoints[...,2])
+    return torch.logical_and(
+        torch.logical_and(x <= xmax + 1e-6, x >= xmin - 1e-6),
+        torch.logical_and(y <= ymax + 1e-6, y >= ymin - 1e-6)
+    )
+
+def on_line_segment(endpoints, x,y):
+    dxe = endpoints[...,2] - endpoints[...,0]
+    dx = endpoints[...,2] - x
+
+    dye = endpoints[...,3] - endpoints[...,1]
+    dy = endpoints[...,3] - y
+
+    return torch.isclose(dy/(dye + 1e-6), dx/(dxe+1e-6)) & in_segment(endpoints,x,y)
+
+
+def line_intersect(line1, line2):
+    a1, b1, a1_general, b1_general, c1 = get_line_ab(line1)
+    a2, b2, a2_general, b2_general, c2 = get_line_ab(line2)
+
+    # Check for parallel lines (a1/b1 == a2/b2 and c1/b1 != c2/b2)
+    parallel = torch.isclose(a1 * b2, a2 * b1)
+    same_line = torch.isclose(a1_general * c2, a2_general * c1) & torch.isclose(b1_general * c2, b2_general * c1)
+
+    # Calculate intersection point using the determinant method (Cramer's rule)
+    determinant = a1_general * b2_general - b1_general * a2_general + 1e-9
+    x = (c1 * b2_general - b1_general * c2) / determinant
+    y = (a1_general * c2 - c1 * a2_general) / determinant
+
+    print("XY intersect:", x[-1,...], y[-1,...], "of lines", line1[-1,...], line2[-1,...])
+
+    # Validate if intersection points are within both segments
+    in_bounds = in_segment(line1, x, y) & in_segment(line2, x, y)
+
+    valid = (~parallel | ~same_line) & in_bounds
+    return x, y, valid
+
+def xywht2corner(rect):
+    """
+    Input: Nx5 (x,y,w,h,theta) tuple
+    Output Nx(8) 4-corner tuples, tl-tr-br-bl order
+    """
     # Define the center coordinates
-    center = torch.tensor([x, y], dtype=torch.float32)
+    center = rect[:,:2].reshape(-1,1,2)
     
     # Half dimensions to simplify corner calculations
-    half_width = w / 2
-    half_height = h / 2
+    half_width = rect[:,2] / 2
+    half_height = rect[:,3] / 2
     
     # Corners of the rectangle in local coordinate space (unrotated)
-    corners = torch.tensor([
-        [-half_width, -half_height],
-        [half_width, -half_height],
-        [half_width, half_height],
-        [-half_width, half_height]
-    ], dtype=torch.float32)  # shape [4, 2]
+    wid = torch.stack((-half_width, half_width, half_width, -half_width), dim=1)
+    hei = torch.stack((-half_height, -half_height, half_height, half_height), dim=1)
+    corners = torch.stack((wid,hei),dim=2)
+    corners.reshape((rect.shape[0], -1, 2))
     
     # Rotation matrix
-    cos_theta = torch.cos(theta)
-    sin_theta = torch.sin(theta)
-    rotation_matrix = torch.tensor([
-        [cos_theta, -sin_theta],
-        [sin_theta, cos_theta]
-    ], dtype=torch.float32)  # shape [2, 2]
+    cost = torch.cos(rect[:,4])
+    sint = torch.sin(rect[:,4])
+    rot_matrix = torch.stack(
+        (torch.stack((cost, -sint), dim=1),
+         torch.stack((sint, cost),dim=1)),
+        dim=2
+    )
     
     # Rotate corners
-    rotated_corners = torch.matmul(corners, rotation_matrix.t())  # Transpose to align dimensions
-    
+    rotated_corners = torch.bmm(corners, rot_matrix)
     # Translate corners to global coordinate space
     oriented_corners = rotated_corners + center
-    
     return oriented_corners
 
-
-def get_polygon_area(rect1, rect2):
+def gen_line(corners):
     """
-    rect1, rect2 must be both arrays of shape (8,), with (x1,y1,x2,y2,x3,y3,x4,y4) in that order, clockwise.
+    Corners: Nx4x2
+    Pass in corners, generate lines for this polygon, in Nx((x1,y1),(x2,y2)) format
+    Output: Nx4x4 format: (Nx4x(x1,y1,x2,y2))
     """
-    pass
+    corners_shift = torch.zeros_like(corners)
+    corners_shift[:,:-1,:] = corners[:,1:,:]
+    corners_shift[:,-1,:] = corners[:,0,:]
+    return torch.cat((corners, corners_shift),dim=2)
+    
+def polygon_area(poly):
+    """
+    poly: shape Nx(kx2), with (x1,y1, ...) in that order, clockwise.
+    """
+    # Deal with empty (no intersect) case
+    if poly.numel() == 0:
+        return 0
+        
+    poly_end = torch.zeros_like(poly) # Roll
+    poly_end[...,:-1,:] = poly[..., 1:,:]  # Nxkx2
+    poly_end[..., -1,:] = poly[..., 0,:]
+
+    # Init area
+    area = torch.zeros(size=(poly.shape[0],1))  # k
+
+    # Get differences
+    dx = (poly_end[...,0] + poly[...,0]) / 2  # Nxk
+    dy = poly_end[...,1] - poly[...,1]
+
+    area = torch.abs(torch.sum(dx * dy, dim=1))
+    return area
+
+
+# def points_in_polygon(points, polygon):
+#     """
+#     Check if multiple points are inside a polygon using a vectorized approach.
+#     points: torch.tensor of shape (n, 2), where n is the number of points to test
+#     polygon: torch.tensor of shape (k, 2), where k is the number of corners in the polygon
+#     Returns a tensor of shape (n,) with boolean values where True indicates the point is inside the polygon.
+#     """
+#     n = points.shape[0]
+#     k = polygon.shape[0]
+    
+#     # Extend points and polygon for vectorized operation
+#     extended_points = points.unsqueeze(1).expand(-1, k, -1)  # Nxkx2
+#     point_ylines = extended_points.repeat((1,1,2))
+#     point_ylines[...,0] = torch.minimum(point_ylines[...,0]-1, torch.zeros(size=(point_ylines.shape[0],)))  # Set first x to be -1, never reached by boxes
+    
+#     extended_polygon = polygon.unsqueeze(0).expand(n, -1, -1) # Nxkx2
+#     rolled_polygon = torch.roll(extended_polygon, shifts=-1, dims=1)
+#     polygon_lines = torch.cat((extended_polygon, rolled_polygon), dim=2) # Nxkx4
+
+#     # Check conditions for intersection
+#     x,y,validity = line_intersect(point_ylines, polygon_lines)
+
+#     print("Validity:", validity)
+    
+#     # Count intersections
+#     intersection_counts = validity.sum(dim=1)
+
+#     # Deal with on-segment lines specially
+#     for i in range(points.shape[0]):
+#         for j in range(polygon_lines.shape[1]):
+#             if on_line_segment(polygon_lines[i,j,:], points[i,0], points[i,1]):
+#                 print("Found point on line:", points[i,0], points[i,1], "in segment", polygon_lines[i,j,:])
+#                 intersection_counts[i] = 1
+#                 break
+
+#     # Point is inside if the count of intersections is odd
+#     return intersection_counts % 2 == 1
+
+def points_in_polygon(points, polygon):
+    n = points.shape[0]
+    k = polygon.shape[0]
+
+    # Get polygon segments
+    extended_polygon = polygon.unsqueeze(0).expand(n, -1, -1) # Nxkx2
+    rolled_polygon = torch.roll(extended_polygon, shifts=-1, dims=1)
+    polygon_lines = rolled_polygon - extended_polygon # Nxkx2
+    
+    # Extend points and polygon for vectorized operation
+    extended_points = points.unsqueeze(1).expand(-1, k, -1).to(torch.float64)  # Nxkx2
+    pt2polygon_lines = (extended_points - extended_polygon).to(torch.float64)
+    # Compute the cross product and get the sign
+    print("POLYGON LINES:", polygon_lines.shape)
+    print("PT LINES:", pt2polygon_lines.shape)
+    cross_prod = torch.linalg.det(torch.stack((polygon_lines, pt2polygon_lines), dim=2)) # Nxk 
+
+    print("CROSS PROD:", cross_prod.shape)
+
+    return (cross_prod>=0).all(dim=1) | (cross_prod<=0).all(dim=1)
+    
+    
 
 
 
-def oriented_iou(rect1, rect2):
-    pass
 
+def sort_points(points):
+    """
+    Sort the points to order them clockwise around their centroid.
+    points: torch.tensor of shape (N, 2)
+    Returns a tensor of shape (N, 2) with sorted points.
+    """
+    centroid = torch.mean(points, dim=0)
+    angles = torch.atan2(points[:, 1] - centroid[1], points[:, 0] - centroid[0])
+    return points[torch.argsort(angles, descending=True)]
+
+def oriented_box_intersect(rect1_corners, rect2_corners):
+    """
+    Find intersects of cornerss
+
+    rect1_corners: Nx4x2
+    """
+    # Generate Lines
+    lines1 = gen_line(rect1_corners)
+    lines2 = gen_line(rect2_corners) # Nx(4x4)
+
+    # Tile lines1, lines2
+    lines1_tiled = torch.repeat_interleave(lines1, 4, dim=1)  # Nx(16x4)
+    lines2_tiled = lines2.repeat(1,4,1)
+    # Compute intersections
+    x,y, valid_inter = line_intersect(lines1_tiled, lines2_tiled) # (Nx16) tensors
+
+    # Init everything list
+    all_poly = []
+
+    # Each intersection may nave different number of endpoints, so have to calculate differently. 
+    for i in range(lines1.shape[0]):
+
+        # Get intersects
+        intersection_points = torch.stack((x[i, valid_inter[i,...]], y[i,valid_inter[i,...]]),dim=1)  # kx2, where k is number of valid intersections
+        print("INTSCT", intersection_points)
+
+        # Add corners of rect1 that are inside rect2
+        c1in2 = points_in_polygon(rect1_corners[i,...], rect2_corners[i,...])
+        if intersection_points.numel() == 0:
+            intersection_points = rect1_corners[i,c1in2,:]
+        elif rect1_corners[i,c1in2,:].numel() > 0:
+            intersection_points = torch.cat((intersection_points, rect1_corners[i,c1in2,:]), dim=0)
+            print("Adding 1 in 2:", rect1_corners[i,c1in2,:])
+
+        c2in1 = points_in_polygon(rect2_corners[i,...], rect1_corners[i,...])
+        if intersection_points.numel() == 0:
+            intersection_points = rect2_corners[i,c2in1,:]
+        elif rect2_corners[i,c2in1,:].numel() > 0:
+            intersection_points = torch.cat((intersection_points, rect2_corners[i,c2in1,:]), dim=0)
+            print("Adding 2 in 1:", rect2_corners[i,c2in1,:])
+
+        print("Found Polygon:", intersection_points)
+    
+        # Sort the points to form a proper polygon (optional, based on your specific need)
+        sorted_points = sort_points(intersection_points)
+        all_poly.append(sorted_points)
+    
+    return all_poly
+
+
+def oriented_box_iou(rect1, rect2):
+    """
+    rect1, rect2: Nx(x,y,w,h,theta)
+    """
+    # Compute intersecting polygon
+    rect1_corners = xywht2corner(rect1)
+    rect2_corners = xywht2corner(rect2)
+    polys = oriented_box_intersect(rect1_corners, rect2_corners)
+    intersect_area = torch.zeros(size=(len(polys),))
+
+    for i in range(len(polys)):
+        intersect_area[i] = polygon_area(polys[i].reshape(1,-1,2))
+
+    # Compute areas
+    rect1_area = rect1[:,2] * rect1[:,3]
+    rect2_area = rect2[:,2] * rect2[:,3]
+    return (intersect_area/(rect1_area+rect2_area-intersect_area)), intersect_area, rect1_area, rect2_area
+
+def quad_area(corners):
+    """
+    Compute areas using cross product (determinant)
+    corners: Nx4x(x,y)
+    """
+    matr_1 = torch.stack((
+                torch.stack((corners[:,3,:] - corners[:,0,:], corners[:,1,:] - corners[:,0,:]),dim=1),
+                torch.stack((corners[:,3,:] - corners[:,2,:], corners[:,1,:] - corners[:,2,:]),dim=1)),
+                dim=1).to(torch.float64)
+    area = torch.sum(torch.abs(torch.linalg.det(matr_1)),dim=1) / 2
+    return area
+
+def oriented_quad_iou(rect1_corners, rect2_corners):
+    """
+    rect1, rect2: Nx4x(x,y)
+    """
+    # Compute intersecting polygon
+    polys = oriented_box_intersect(rect1_corners, rect2_corners)
+    intersect_area = torch.zeros(size=(len(polys),))
+
+    for i in range(len(polys)):
+        intersect_area[i] = polygon_area(polys[i].reshape(1,-1,2))
+
+    # Compute areas using cross product (determinant)
+    rect1_area = quad_area(rect1_corners)
+    rect2_area = quad_area(rect2_corners)
+    
+    return (intersect_area/(rect1_area+rect2_area-intersect_area)), intersect_area, rect1_area, rect2_area
 
 
 
@@ -486,6 +710,26 @@ def generate_box_center_list(bounding_boxes,index):
     # with open()
 
 
+def plot_oriented_iou(rect1_corners, rect2_corners, id, val1, val2, val3, prefix=""):
+    fig, (ax1, axc) = plt.subplots(1, 2, figsize=(12, 6), subplot_kw={'aspect': 'equal'})
+
+    polys = oriented_box_intersect(rect1_corners[id,...].reshape(1,-1,2), rect2_corners[id,...].reshape(1,-1,2))
+
+    rect1np = rect1_corners[id,...].numpy()
+    rect2np = rect2_corners[id,...].numpy()
+    polynp = polys[0].numpy()
+
+    val1 = round(val1.item(),2)
+    
+    ax1.fill(rect1np[:,0],rect1np[:,1],facecolor='none', edgecolor='blue', label=f"box 1: {val2}", linewidth=4)
+    ax1.fill(rect2np[:,0], rect2np[:,1],facecolor='none', edgecolor='magenta', label=f"box 2: {val3}", linewidth=3)
+    ax1.legend()
+    axc.fill(rect1np[:,0],rect1np[:,1],facecolor='none', edgecolor='blue', label=f"box 1: {val2}", linewidth=4)
+    axc.fill(rect2np[:,0], rect2np[:,1],facecolor='none', edgecolor='magenta', label=f"box 2: {val3}", linewidth=3)
+    axc.fill(polynp[:,0], polynp[:,1],facecolor='wheat', edgecolor='purple', label=f"intersection: {val1}", linewidth=2)
+    axc.legend()
+    plt.savefig(prefix+f"oriented_fig_{id}.png")
+
 def test_iou():
     # Test iou corners
     print("TESTING IOU CORNERS")
@@ -507,7 +751,89 @@ def test_iou():
         print("Computed IOU:", iou[i], "expected", iou_truth[i])
 
 
+def test_oriented_iou():
+    # Test iou corners
+    print("TESTING ORIENT IOU CORNERS")
+    box_1 = torch.tensor([ [1,1,2,2,0]
+                          ,[1,1,2,2,0]
+                          ,[1,1,2,2,0]
+                          ,[1,1,2,2,0]
+                          ,[1,1,2,2,0]
+                          ,[1,1,2,2,0]
+                          ,[1,1,2,2,0]
+                          ,[1,1,3,7,torch.pi*3/7]
+                          ,[3,1,3,7,torch.pi*3/7]
+                        ])
+    box_2 = torch.tensor([ [1.5,1.5,1,1,torch.pi]
+                          ,[3.5,2.5,3,1,torch.pi/2]
+                          ,[1,1,2,2,-torch.pi]
+                          ,[1,2.5,1,4,0]
+                          ,[1,1,1,1,torch.pi/5]
+                          ,[2,3,2,10,-torch.pi/3.6]
+                          ,[1,1,2,5,-torch.pi/3]
+                          ,[1,1,2,5,-torch.pi/3]
+                          ,[1,3,2,5,-torch.pi/6]
+                        ])
+
+    # Test Box Lines    
+    iou, inta, rect1a, rect2a = oriented_box_iou(box_1, box_2)
+    iou_truth = [0.25, 0, 1, 1.5/6.5, 0.25, -1, -1, -1, -1]
+    # print("Computed IOU:", iou)
+    for i in range(len(iou_truth)):
+        print("Computed IOU:", iou[i], "expected", iou_truth[i])
+        rect1_corners = xywht2corner(box_1)
+        rect2_corners = xywht2corner(box_2)
+        plot_oriented_iou(rect1_corners, rect2_corners, i, val1=inta[i], val2=rect1a[i],val3=rect2a[i])
+
+def test_quad_iou():
+    # Test iou corners
+    print("TESTING ORIENT IOU CORNERS")
+    quad_1 = torch.tensor([ [1,1,4,2,5,7,0,4]
+                        ]).reshape(1,-1,2)
+    quad_2 = torch.tensor([ [1,3,3,2,8,7,2,6]
+                        ]).reshape(1,-1,2)
+
+    # Test Box Lines    
+    quad_iou, inta, rect1a, rect2a = oriented_quad_iou(quad_1, quad_2)
+    quad_iou_truth = [-1]
+    for i in range(len(quad_iou_truth)):
+        print("Computed IOU:", quad_iou[i], "expected", quad_iou_truth[i])
+        plot_oriented_iou(quad_1, quad_2, i, val1=inta[i], val2=rect1a[i],val3=rect2a[i], prefix="quad_")
+
+def test_oriented_box_utils():
+    # Test iou corners
+    print("TESTING ORIENT IOU UTILS")
+    box_1 = torch.tensor([[1.0,1.0,2.0,2,0],[1.0,1.0,2,2,torch.pi/4]]).reshape(2,-1)
+    box_2 = torch.tensor([[1.5,1.5,1,1,0],[1.5,1.5,1,1,torch.pi/4]]).reshape(2,-1)
+
+    # Test boxes
+    box_1_corner = xywht2corner(box_1)
+    box_2_corner = xywht2corner(box_2)
+    print("Box 1 Corners:", box_1_corner)
+    print("Box 2 Corners:", box_2_corner)
+
+    # Test Polygon Size
+    box_1_area = polygon_area(box_1_corner)
+    box_2_area = polygon_area(box_2_corner)
+    print("Box 1 Area:", box_1_area, "expected both",4)
+    print("Box 2 Area:", box_2_area, "expected both",1)
+
+    # Test intersect
+    print("Intersect test parallel:", points_in_polygon(torch.tensor([[-1.0,1.0,1.0,1.0]]).reshape(1,4), torch.tensor([[0.0,0.0,2.0,0.0]])))
+    print("Intersect test parallel vertical:", points_in_polygon(torch.tensor([[1.0,-1.0,1.0,3.0]]).reshape(1,4), torch.tensor([[0.0,0.0,0.0,4.0]])))
+    print("Intersect test overlap:", points_in_polygon(torch.tensor([[-1.0,1.0,1.0,1.0]]).reshape(1,4), torch.tensor([[1.0,1.0,2.0,1.0]])))
+    print("Intersect test overlap vertical:", points_in_polygon(torch.tensor([[0.0,1.0,0.0,5.0]]).reshape(1,4), torch.tensor([[0.0,0.0,0.0,3.0]])))
+    print("Intersect test actual:", points_in_polygon(torch.tensor([[-1.0,1.0,1.0,1.0]]).reshape(1,4), torch.tensor([[0.0,0.0,1.0,2.0]])))
+    print("Intersect test no intersect:", points_in_polygon(torch.tensor([[-1.0,1.0,1.0,1.0]]).reshape(1,4), torch.tensor([[0.0,0.0,2.0,2.0]])))
+
+    # Test point in box
+    print("Inside test:", points_in_polygon(torch.tensor([[1.0,1.0]]).reshape(1,2), box_2_corner[0,...]))
+    print("Edge test:", points_in_polygon(torch.tensor([[2.0,1.0]]).reshape(1,2), box_2_corner[0,...]))
+    print("Corner test:", points_in_polygon(torch.tensor([[2.0,2.0]]).reshape(1,2), box_2_corner[0,...]))
+    print("Outside test:", points_in_polygon(torch.tensor([[3.0,3.0]]).reshape(1,2), box_2_corner[0,...]))
 
 if __name__ == "__main__":
-    test_iou()
-
+    # test_iou()
+    test_oriented_iou()
+    test_quad_iou()
+    # test_oriented_box_utils()

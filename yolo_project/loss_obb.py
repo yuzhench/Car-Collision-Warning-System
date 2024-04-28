@@ -94,17 +94,22 @@ class YoloOBBLoss(nn.Module):
         # ================== #
 
         class_loss = self.mse(
-            torch.flatten(exists_box * predictions[..., :20], end_dim=-2,),
-            torch.flatten(exists_box * target[..., :20], end_dim=-2,),
+            torch.flatten(exists_box * predictions[..., :20], end_dim=-2),
+            torch.flatten(exists_box * target[..., :20], end_dim=-2),
         )
 
         # ======================== #
         #   FOR ORIENTATION LOSS   #
         # ======================== #
         # From complex yolo https://arxiv.org/abs/1803.06199
+        theta_pred = predictions[..., [25,31]]
+        theta_target = ptarget[..., [25,31]]
+        T_pred = torch.stack((torch.cos(theta_pred), torch.sin(theta_pred)), dim=-1) # stack real and complex loss together for broadcast
+        T_target = torch.stack((torch.cos(theta_target), torch.sin(theta_target)), dim=-1) 
+        
         euler_loss = self.mse(
-            torch.flatten(exists_box * predictions[..., [25,31]], start_dim=1),
-            torch.flatten(exists_box * target[..., [25,31], start_dim=1),
+            torch.flatten(exists_box * T_pred, start_dim=1),
+            torch.flatten(exists_box * T_target, start_dim=1),
         )
         
 

@@ -757,7 +757,7 @@ def generate_box_center_list(bounding_boxes,index):
 
 
 def plot_oriented_iou(rect1_corners, rect2_corners, id, val1, val2, val3, prefix=""):
-    fig, (ax1, axc) = plt.subplots(1, 2, figsize=(12, 6), subplot_kw={'aspect': 'equal'})
+    fig, (ax1, axc) = plt.subplots(2, 1, figsize=(6, 8), subplot_kw={'aspect': 'equal'})
 
     polys = oriented_box_intersect(rect1_corners[id,...].reshape(1,-1,2), rect2_corners[id,...].reshape(1,-1,2))
 

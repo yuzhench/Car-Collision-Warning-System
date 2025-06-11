@@ -17,3 +17,5 @@ methodology:
 
 
 
+
+# [📄 Paper](EECS442_Final.pdf)

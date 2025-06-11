@@ -14,4 +14,6 @@ methodology:
   2. angled bbox (new loss function) 
   3. transfer learning (retrained the last few fully connected layers)
   4. superpoint superglue (to add an index to each object for tracking )
-  5. 
+
+
+
